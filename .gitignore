@@ -1,0 +1,20 @@
+# environments / caches
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# runtime / generated
+.session/
+output/
+data/*
+!data/.gitkeep
+
+# big binaries (kept on disk, not committed)
+*.tif
+*.tiff
+*.nii
+*.nii.gz
+
+# prior exploration (kept locally for reference, not part of the repo)
+exploration/

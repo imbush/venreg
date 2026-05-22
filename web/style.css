@@ -1,0 +1,21 @@
+body{font-family:system-ui,Arial,sans-serif;margin:0;background:#0f0f0f;color:#ddd}
+header{padding:8px 14px;background:#1a1a1a;display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:16px;margin:0;color:#7fd}.sub{color:#9cf;font-size:13px}
+.hint{font-size:11px;color:#999}
+section{padding:8px 14px;background:#151515;border-bottom:1px solid #262626}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+#wrap{display:flex;gap:10px;padding:10px}
+.panel{flex:1;background:#161616;border-radius:8px;padding:10px}
+.panel h2{margin:0 0 6px;font-size:13px;color:#9cf}
+.reps button,.tbtn{background:#333;color:#ccc;border:0;padding:5px 10px;margin-right:4px;border-radius:5px;cursor:pointer;font-size:12px}
+.reps button.on{background:#2a7;color:#fff}
+canvas{width:100%;background:#000;border:1px solid #333;cursor:crosshair;image-rendering:pixelated;touch-action:none}
+.zrow{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px}
+.zrow input[type=range]{flex:1}
+button{background:#2a7;border:0;color:#fff;border-radius:5px;padding:6px 11px;cursor:pointer;font-size:13px}
+button.nav{background:#2557aa;padding:4px 9px}button.danger{background:#a33}
+select{background:#222;color:#ddd;border:1px solid #444;border-radius:4px;padding:3px}
+table{border-collapse:collapse;font-size:12px;margin-top:8px}
+th,td{border:1px solid #333;padding:3px 6px;text-align:center}.a{color:#6f6}.b{color:#f88}
+#fit{font-size:12px;background:#222;padding:6px 8px;border-radius:6px;margin-top:4px}
+.good{color:#6f6}.bad{color:#f88}
