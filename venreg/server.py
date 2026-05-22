@@ -45,6 +45,16 @@ def api_list():
     return {"files": files}
 
 
+def api_session():
+    """Report the currently-loaded pair so the browser can resume on open."""
+    if "A" not in S:
+        return {"loaded": False}
+    return {"loaded": True, "A": {"name": S["A"]["name"], "nz": S["A"]["shape"][0], "shape": S["A"]["shape"]},
+            "B": {"name": S["B"]["name"], "nz": S["B"]["shape"][0], "shape": S["B"]["shape"]},
+            "work_xy": imaging.WORK_XY, "reps": REPS,
+            "results": list(S.get("results", {}).keys())}
+
+
 def api_load(body):
     a, b = body["fileA"], body["fileB"]
     pa = a if os.path.isabs(a) else os.path.join(ROOT, a)
@@ -175,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
             path = "/index.html"
         if path == "/api/list":
             return self._send(200, "application/json", json.dumps(api_list()).encode())
+        if path == "/api/session":
+            return self._send(200, "application/json", json.dumps(api_session()).encode())
         if path.startswith("/slices/"):
             fp = os.path.join(SESS, path[1:])
         else:

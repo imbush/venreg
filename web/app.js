@@ -137,15 +137,7 @@ async function loadExampleLm(){const r=await fetch('example_landmarks.json').cat
  if(!r||!r.ok){alert('no example landmarks bundled');return;}const d=await r.json();lms={};Object.assign(lms,d);newPair();renderTable();draw('A');draw('B');}
 
 // ---------- load flow ----------
-async function init(){
- const lst=await (await fetch('/api/list')).json();
- const opt=lst.files.map(f=>`<option value="${f}">${f}</option>`).join('');
- $('fileA').innerHTML=opt;$('fileB').innerHTML=opt;if(lst.files[1])$('fileB').selectedIndex=1;
- $('loadbtn').onclick=loadPair;}
-async function loadPair(){
- $('loadstatus').textContent='loading & preprocessing… (~10–30 s)';
- const r=await post('/api/load',{fileA:$('fileA').value,fileB:$('fileB').value});
- if(r.error){$('loadstatus').textContent='error: '+r.error;return;}
+function buildViewer(r){
  man=r;SF=man.work_xy/512;Object.keys(imgs).forEach(k=>delete imgs[k]);
  $('wrap').innerHTML=panel('A')+panel('B');$('controls').style.display='';
  ['A','B'].forEach(v=>{document.querySelector(`#p${v} .reps`).addEventListener('click',e=>{if(e.target.dataset.r){st[v].rep=e.target.dataset.r;
@@ -153,5 +145,19 @@ async function loadPair(){
    $('z'+v).addEventListener('input',e=>{st[v].z=+e.target.value;$('zl'+v).textContent=`z ${st[v].z}/${man[v].nz-1}`;draw(v);});
    setupCanvas(v);draw(v);});
  window.onkeydown=e=>{if(e.key==='ArrowUp')step('B',-1);if(e.key==='ArrowDown')step('B',1);};
- $('loadstatus').textContent='loaded ✓';renderTable();}
+ renderTable();}
+async function init(){
+ const lst=await (await fetch('/api/list')).json();
+ const opt=lst.files.map(f=>`<option value="${f}">${f}</option>`).join('');
+ $('fileA').innerHTML=opt;$('fileB').innerHTML=opt;if(lst.files[1])$('fileB').selectedIndex=1;
+ $('loadbtn').onclick=loadPair;
+ const ses=await (await fetch('/api/session')).json();   // resume an already-loaded pair
+ if(ses.loaded){[...$('fileA').options].forEach(o=>{if(o.value.endsWith(ses.A.name))$('fileA').value=o.value;});
+   [...$('fileB').options].forEach(o=>{if(o.value.endsWith(ses.B.name))$('fileB').value=o.value;});
+   buildViewer(ses);$('loadstatus').textContent=`resumed: ${ses.A.name} ↔ ${ses.B.name}`;}}
+async function loadPair(){
+ $('loadstatus').textContent='loading & preprocessing… (~10–30 s)';
+ const r=await post('/api/load',{fileA:$('fileA').value,fileB:$('fileB').value});
+ if(r.error){$('loadstatus').textContent='error: '+r.error;return;}
+ buildViewer(r);$('loadstatus').textContent='loaded ✓';}
 init();
