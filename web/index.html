@@ -43,11 +43,9 @@
   </div>
   <div class="row">
     <b>5. Cells</b>
-    A ch <select id="cellChA"></select>
-    B ch <select id="cellChB"></select>
-    <select id="segmode"><option value="2d">2D+stitch (fast)</option><option value="3d">full 3D (slow)</option></select>
-    <button onclick="segment('A')">segment A</button>
-    <button onclick="segment('B')">segment B</button>
+    <label class="filebtn">load masks A<input type="file" accept=".tif,.tiff,.npy" onchange="loadMasks(this,'A')" hidden></label>
+    <label class="filebtn">load masks B<input type="file" accept=".tif,.tiff,.npy" onchange="loadMasks(this,'B')" hidden></label>
+    <span class="hint">(precomputed Cellpose label TIFF or _seg.npy)</span>
     — match using
     <select id="cellmode"><option value="rigid">rigid</option><option value="warp">warp</option></select>
     <select id="cellmethod"><option value="hungarian">hungarian (optimal)</option><option value="mnn">mutual-NN</option><option value="consistent">geometry-consistent</option></select>

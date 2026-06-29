@@ -1,37 +1,40 @@
-"""Cell segmentation (Cellpose, 3-D) + cross-image cell matching for a registered pair.
+"""Pre-computed cell masks (loaded, not segmented here) + cross-image cell matching for a
+registered pair.
 
-Matching is purely **geometric** — it uses cell positions after the chosen registration
-(and their local spatial configuration), never appearance/intensity. That is deliberate:
-A and B are imaged with different strategies (e.g. before vs after fixation), so a cell's
-brightness/shape/stain differs between them; only *where the cells are* (once aligned) is
-comparable. Several matchers are provided so the result can be compared.
+Segmentation is done **outside** the app (e.g. the Cellpose GUI / a GPU box, with your
+own tuned parameters); here we just read the instance-label volume. Matching is purely
+**geometric** — it uses cell positions after the chosen registration (and their local
+spatial configuration), never appearance/intensity. That is deliberate: A and B are imaged
+with different strategies (e.g. before vs after fixation), so a cell's brightness/shape/
+stain differs between them; only *where the cells are* (once aligned) is comparable.
+Several matchers are provided so the result can be compared.
 """
 import numpy as np
 
 
-# ---------------- segmentation ----------------
+# ---------------- read pre-computed instance masks ----------------
 
-def segment(vol01, diameter=None, mode="2d", gpu=True):
-    """Cellpose instance segmentation of a [0,1] volume (z,y,x) -> int32 3-D labels.
-
-    mode='2d'  : segment each z-slice in 2-D and stitch labels across z (fast — the
-                 practical default; full do_3D with cellpose-SAM is extremely slow on
-                 CPU/MPS). mode='3d' : true volumetric do_3D (much slower).
-    gpu=True uses Apple MPS / CUDA when available (Cellpose falls back to CPU otherwise).
-    Handles both Cellpose v2/v3 (``Cellpose`` + cyto3) and v4 / cellpose-SAM."""
-    from cellpose import models
-    img = (np.clip(vol01, 0, 1) * 255).astype(np.uint8)
-    if hasattr(models, "Cellpose"):                 # v2 / v3
-        model = models.Cellpose(gpu=gpu, model_type="cyto3")
-        kw = dict(channels=[0, 0], diameter=diameter or 0)
-    else:                                           # v4 (cellpose-SAM)
-        model = models.CellposeModel(gpu=gpu)
-        kw = dict(diameter=diameter or None)
-    if mode == "3d":
-        masks = model.eval(img, do_3D=True, z_axis=0, **kw)[0]
+def read_masks(raw, name):
+    """Parse a pre-computed instance-mask file (bytes) -> int32 label volume (z,y,x).
+    Accepts a label TIFF (e.g. Cellpose ``*_cp_masks.tif``) or a Cellpose ``*_seg.npy``
+    (a pickled dict with a 'masks' array)."""
+    import io
+    if name.lower().endswith(".npy"):
+        obj = np.load(io.BytesIO(raw), allow_pickle=True)
+        if obj.dtype == object:                     # _seg.npy: 0-d object array holding a dict
+            d = obj.item()
+            m = d.get("masks", d) if isinstance(d, dict) else d
+        else:
+            m = obj
     else:
-        masks = model.eval(img, do_3D=False, z_axis=0, stitch_threshold=0.5, **kw)[0]
-    return np.asarray(masks, dtype=np.int32)
+        import tifffile
+        m = tifffile.imread(io.BytesIO(raw))
+    m = np.squeeze(np.asarray(m))
+    while m.ndim > 3:                               # drop stray channel/time axes
+        m = m[0]
+    if m.ndim == 2:
+        m = m[None]
+    return m.astype(np.int32)
 
 
 def centroids(labels):

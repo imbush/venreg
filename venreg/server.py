@@ -247,25 +247,25 @@ def _write_rgb_slices(rel, rgb):
         _png_rgb(rgb[z]).save(os.path.join(d, f"z{z:03d}.png"))
 
 
-def api_segment(body):
-    """Cellpose 3-D segment one channel of A or B; store labels + centroids (slow)."""
-    which, ch = body["which"], int(body["channel"])
-    diam = body.get("diameter") or None
-    mode = body.get("seg_mode", "2d")
+def api_load_masks(which, name, raw):
+    """Import a pre-computed instance-mask file for A or B (uploaded bytes), resample to
+    the working grid, and store cell labels + centroids. Segmentation is done outside the
+    app (Cellpose GUI / your own pipeline)."""
+    from scipy.ndimage import zoom
     v = S.get(which)
     if not v:
         return {"error": "not loaded"}
-    if not (0 <= ch < v.get("nchan", 1)):
-        return {"error": "bad channel"}
-    vol = imaging.load_volume(v["path"], channel=ch, work_xy=imaging.WORK_XY)[0]
     try:
-        labels = C.segment(vol, diameter=diam, mode=mode)
-    except ImportError:
-        return {"error": "Cellpose not installed — run: pip install cellpose"}
-    ids, cen, sizes = C.centroids(labels)
+        native = C.read_masks(raw, name)
+    except Exception as e:
+        return {"error": f"could not read masks: {e}"}
+    nz = v["shape"][0]; w = imaging.WORK_XY
+    mz, my, mx = native.shape
+    work = zoom(native, (nz / mz, w / my, w / mx), order=0).astype(np.int32)  # nearest: keep labels
+    ids, cen, sizes = C.centroids(work)
     with _lock:
-        v["cells"] = dict(labels=labels, ids=ids, centroids=cen, sizes=sizes, channel=int(ch))
-    return {"which": which, "n_cells": int(len(ids)), "channel": int(ch)}
+        v["cells"] = dict(labels=work, ids=ids, centroids=cen, sizes=sizes, channel=-1)
+    return {"which": which, "n_cells": int(len(ids))}
 
 
 def api_match_cells(body):
@@ -336,8 +336,7 @@ def api_unwarp(body):
 ROUTES = {"/api/list": lambda b: api_list(), "/api/load": api_load,
           "/api/register": api_register, "/api/save": api_save, "/api/unwarp": api_unwarp,
           "/api/load_landmarks": api_load_landmarks, "/api/channel": api_channel,
-          "/api/result_channel": api_result_channel,
-          "/api/segment": api_segment, "/api/match_cells": api_match_cells}
+          "/api/result_channel": api_result_channel, "/api/match_cells": api_match_cells}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -373,9 +372,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, "text/plain", b"not found")
 
     def do_POST(self):
+        from urllib.parse import urlparse, parse_qs
+        u = urlparse(self.path)
         n = int(self.headers.get("Content-Length", 0))
+        if u.path == "/api/load_masks":              # raw binary upload (mask file)
+            raw = self.rfile.read(n)
+            q = parse_qs(u.query)
+            try:
+                res = api_load_masks(q.get("which", ["A"])[0], q.get("name", ["masks.tif"])[0], raw)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                return self._send(500, "application/json", json.dumps({"error": str(e)}).encode())
+            return self._send(200, "application/json", json.dumps(res).encode())
         body = json.loads(self.rfile.read(n) or b"{}")
-        fn = ROUTES.get(self.path.split("?")[0])
+        fn = ROUTES.get(u.path)
         if not fn:
             return self._send(404, "application/json", b'{"error":"no route"}')
         try:

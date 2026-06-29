@@ -188,12 +188,11 @@ function setLmFromRows(rows){lms={};rows.forEach((r,i)=>{lms[i+1]={A:{x:r[0],y:r
  newPair();renderTable();draw('A');draw('B');}
 
 // ---------- step 5: cells ----------
-function fillCellCh(v){const sel=$('cellCh'+v);if(!sel||!man)return;const m=man[v];
- sel.innerHTML=Array.from({length:m.nchan||1},(_,c)=>`<option value="${c}">${(m.labels&&m.labels[c])||('ch'+c)}</option>`).join('');}
-async function segment(v){const ch=+$('cellCh'+v).value,sm=$('segmode').value;
- $('cellstatus').textContent=`segmenting ${v} (Cellpose ${sm} — can take minutes)…`;
- const r=await post('/api/segment',{which:v,channel:ch,seg_mode:sm});
- $('cellstatus').textContent=r.error?('error: '+r.error):`${v}: ${r.n_cells} cells (ch${r.channel})`;}
+async function loadMasks(input,which){const f=input.files[0];if(!f)return;
+ $('cellstatus').textContent=`loading masks for ${which}…`;
+ const buf=await f.arrayBuffer();
+ const r=await fetch(`/api/load_masks?which=${which}&name=${encodeURIComponent(f.name)}`,{method:'POST',body:buf}).then(x=>x.json()).catch(e=>({error:String(e)}));
+ $('cellstatus').textContent=r.error?('error: '+r.error):`${which}: ${r.n_cells} cells loaded`;input.value='';}
 async function matchCells(){
  $('cellstatus').textContent='matching cells…';
  const r=await post('/api/match_cells',{mode:$('cellmode').value,method:$('cellmethod').value,max_dist:+$('cellmaxd').value});
@@ -226,7 +225,7 @@ function buildViewer(r){
    $('z'+v).addEventListener('input',e=>{st[v].z=+e.target.value;$('zl'+v).textContent=`z ${st[v].z}/${man[v].nz-1}`;draw(v);});
    setupCanvas(v);draw(v);});
  window.onkeydown=e=>{if(e.key==='ArrowUp')step('B',-1);if(e.key==='ArrowDown')step('B',1);};
- fillCellCh('A');fillCellCh('B');renderTable();}
+ renderTable();}
 let fileMeta={};   // path -> {n_channels, channel_labels}
 function fillChannels(fileSel,chSel,want){
  const m=fileMeta[$(fileSel).value]||{n_channels:1,channel_labels:null};

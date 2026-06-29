@@ -5,4 +5,5 @@ tifffile>=2023.0
 zarr>=2.14,<3
 SimpleITK>=2.3
 Pillow>=10.0
-cellpose>=3      # Step 5 cell segmentation (heavy: pulls in PyTorch, ~GB model download)
+# Step 5 cell masks are produced OUTSIDE this app (e.g. the Cellpose GUI) and imported as
+# a label TIFF / _seg.npy — so no Cellpose/PyTorch dependency here.

@@ -82,23 +82,22 @@ they appear in the file dropdowns automatically.
    **load saved landmarks** next to *2. Landmarks* — a file picker for any `.csv`/`.json`
    landmark file (parsed in the browser).
 
-5. **Cell matching (optional).** Pick a **cell channel** for A and B (the somata/nuclei
-   channel), **segment** each with Cellpose (default **2D per-slice + z-stitch**, which
-   yields 3-D cell labels; **full 3D** is selectable but much slower), then **match cells**
-   using the chosen `rigid`/`warp` result. Matching is purely **geometric** — A's cell
-   centroids are mapped
-   into B's frame by the registration, then paired — because A and B are imaged differently
-   (e.g. before vs after fixation), so appearance/overlap is unreliable; only *position*
-   (once aligned) is comparable. Three matchers to compare: **hungarian** (globally optimal
-   assignment), **mutual-NN**, and **geometry-consistent** (keeps matches whose local
-   displacement agrees with their neighbours). The **cell view** then colours each matched
-   A↔B pair the same hue (unmatched cells dim grey): panel A shows A's cells, panel B shows
-   B's cells with A's warped cells overlaid, so matched cells coincide in colour.
-   - *Heavy:* Cellpose pulls in PyTorch and downloads a ~1 GB model (cellpose-SAM) on
-     first use. It runs on Apple **MPS** / CUDA when available (else CPU). Even so the SAM
-     model is slow — expect **several to tens of minutes** per stack for 2D+stitch; **full
-     3D is far slower** and often impractical on CPU/MPS. Segmentation runs on the 256-px
-     working grid.
+5. **Cell matching (optional).** Segment the cell (somata/nuclei) channel **outside the
+   app** — e.g. the [Cellpose](https://cellpose.org) GUI or your own pipeline, with your
+   tuned parameters and hardware — then **load masks A / load masks B** (a label `.tif`,
+   e.g. Cellpose `*_cp_masks.tif`, or a Cellpose `_seg.npy`). The app reads the instance
+   labels, resamples them to the working grid, and takes cell centroids. **Match cells**
+   then pairs them through the chosen `rigid`/`warp` result. Matching is purely
+   **geometric** — A's cell centroids are mapped into B's frame by the registration, then
+   paired — because A and B are imaged differently (e.g. before vs after fixation), so
+   appearance/overlap is unreliable; only *position* (once aligned) is comparable. Three
+   matchers to compare: **hungarian** (globally optimal assignment), **mutual-NN**, and
+   **geometry-consistent** (keeps matches whose local displacement agrees with their
+   neighbours). The **cell view** then colours each matched A↔B pair the same hue
+   (unmatched cells dim grey): panel A shows A's cells, panel B shows B's cells with A's
+   warped cells overlaid, so matched cells coincide in colour.
+   - Segmentation is done externally, so the app has **no Cellpose/PyTorch dependency**.
+     Masks are resampled to the 256-px working grid, so a moderate-resolution mask is fine.
 
 Evaluate per **depth slice**, never by max-Z projection (a projection makes vessels at
 different depths look aligned when they aren't).
@@ -123,7 +122,7 @@ run.py                 launch script
 venreg/
   imaging.py           TIFF load + downsample, vesselness / orientation
   registration.py      landmark fits (reflected similarity / affine, z-map), warp, Demons, eval
-  cells.py             Cellpose 3-D segmentation + geometric cell matching (step 5)
+  cells.py             read pre-computed cell masks + geometric cell matching (step 5)
   server.py            stdlib HTTP API (list / load / channel / register / unwarp /
                        result_channel / save) + static serving
 web/                   index.html, app.js, style.css  (the viewer)
