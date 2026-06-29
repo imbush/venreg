@@ -10,8 +10,8 @@
 
 <section id="loadbar">
   <b>1. Load a pair of TIFFs:</b>
-  A <select id="fileA"></select>
-  B <select id="fileB"></select>
+  A <select id="fileA"></select> <span class="hint">ch</span> <select id="chA"></select>
+  B <select id="fileB"></select> <span class="hint">ch</span> <select id="chB"></select>
   <button id="loadbtn">Load</button>
   <span id="loadstatus" class="hint"></span>
 </section>
@@ -22,8 +22,8 @@
   <div class="row">
     <b>2. Landmarks</b> — current pair # <b id="curpair">1</b>
     <button onclick="newPair()">+ new pair</button>
-    <button onclick="loadExampleLm()">load example landmarks</button>
-    <button class="danger" onclick="clearAll()">clear</button>
+    <label class="filebtn">load saved landmarks<input type="file" id="lmupload" accept=".csv,.json" onchange="loadLmFile(this)" hidden></label>
+    <button class="danger" onclick="clearAll()">clear all landmarks</button>
     <span class="hint">tip: spread points across the field &amp; vary depth; ≥4 well-spread pairs</span>
   </div>
   <div class="row">

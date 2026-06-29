@@ -38,8 +38,24 @@ they appear in the file dropdowns automatically.
 ## Workflow
 
 1. **Load a pair of TIFFs.** Pick file A and file B in the top bar and click **Load**
-   (preprocessing takes ~10–30 s; it builds fluorescence / vesselness / mask /
-   intersection representations and per-slice views).
+   (preprocessing builds the per-slice fluorescence views; vesselness is computed
+   internally to drive the registration but isn't shown). Each panel has its own
+   **brightness**, **blur**, and **zoom** sliders, a **z-proj** toggle (additively
+   overlays that stack's full-depth max-Z projection for context), and a **marks** toggle
+   (hide/show the landmark markers when they obscure the image).
+   - *Multi-channel stacks:* for an ImageJ hyperstack (e.g. `ZCYX`) a **ch** dropdown
+     appears next to each file (with the channel's ImageJ label when present) — pick the
+     **vessel/venation channel** for each before loading; that channel drives the
+     registration. Once loaded, per-panel **channel buttons** let you toggle which channel
+     is *displayed* (e.g. switch to DAPI/GCaMP for context while landmarking); other
+     channels are rendered on demand. The registration channel is marked with `*`. Changing
+     A's channel updates B's overlay too (the live preview and any result overlay show A's
+     displayed channel, warped on demand). Generating a registration resets both panels to
+     the channels that were registered.
+   - *Large mosaics:* loading reads and downsamples **one z-plane at a time** (a multi-GB
+     mosaic never loads in full, so peak RAM stays low). The fluorescence view is rendered
+     at a high display resolution (1024 px in-plane, sharp & zoomable for landmarking)
+     while vesselness and the registration fit run on the cheaper 256-px working grid.
 2. **Label corresponding points.** In the two-panel viewer: **wheel = zoom, drag = pan,
    click = drop a landmark, ↑/↓ = change z slice**. Click the same feature in A and in B
    (they share the *current pair #*), then **+ new pair** and repeat. Aim for **≥4 well-
@@ -47,7 +63,11 @@ they appear in the file dropdowns automatically.
    time (red = B, green = A, yellow = match) and reports scale / rotation / **FLIP** /
    RMS residual so you can spot a bad pick (large residual in the table).
    - *Tip:* turn on **overlay-pick** to correct the registration directly on the overlay —
-     click a green (warped-A) vessel, then the red (B) vessel it belongs on.
+     click a green (warped-A) vessel, then the red (B) vessel it belongs on. The green
+     click is mapped back to its true A location by inverting whatever is currently shown:
+     the live similarity preview, or — when a **rigid/warp result** is displayed — that
+     result's actual transform (including the deformable field), so the A landmark lands
+     correctly.
 3. **Generate registration.** Click **Generate best RIGID** (similarity + reflection +
    z-map) or **Generate best WARP** (reflected affine + 3-D diffeomorphic Demons). The
    result is computed server-side from your landmarks and shown as an overlay; the status
@@ -55,7 +75,9 @@ they appear in the file dropdowns automatically.
    aligned A with matching orientation; chance ≈ 0.10).
 4. **Save.** Choose `rigid` or `warp` and save the **registered TIFF**, the **transform**
    (4×4 matrix JSON + `.npy`, plus the deformation field for warps), or the **landmarks**
-   (CSV). Files land in **`output/`**.
+   (CSV). Files land in **`output/`**. Saved landmarks can be reloaded later via
+   **load saved landmarks** next to *2. Landmarks* — a file picker for any `.csv`/`.json`
+   landmark file (parsed in the browser).
 
 Evaluate per **depth slice**, never by max-Z projection (a projection makes vessels at
 different depths look aligned when they aren't).
@@ -70,15 +92,15 @@ different depths look aligned when they aren't).
 - `transform_warp.json` / `_matrix.npy` — reflected affine + deformable
 - `A_registered_to_B_rigid.tif`, `A_registered_to_B_warp.tif`
 
-To reproduce in the app: Load A and B from the dropdowns, click **load example
-landmarks**, then **Generate best RIGID / WARP**.
+To reproduce in the app: Load A and B from the dropdowns, click **load saved landmarks**
+and pick `example/landmarks_work256.json`, then **Generate best RIGID / WARP**.
 
 ## Layout
 
 ```
 run.py                 launch script
 venreg/
-  imaging.py           TIFF load + downsample, vesselness / mask / orientation
+  imaging.py           TIFF load + downsample, vesselness / orientation
   registration.py      landmark fits (reflected similarity / affine, z-map), warp, Demons, eval
   server.py            stdlib HTTP API (list / load / register / save) + static serving
 web/                   index.html, app.js, style.css  (the viewer)
@@ -89,8 +111,14 @@ output/                saved results land here
 
 ## Notes
 
-- Works in a downsampled working grid (in-plane 256 px) for responsiveness; saved TIFFs
-  are at that working resolution.
+- Registration runs on a downsampled working grid (in-plane 256 px, `WORK_XY` in
+  `venreg/imaging.py`) for responsiveness — ample for fitting a global transform from a
+  handful of landmarks — and saved TIFFs are at that resolution. The **fluorescence
+  display** is rendered separately at a higher resolution (`DISPLAY_XY` in
+  `venreg/server.py`, default 1024 px) so large mosaics stay sharp; landmarks are placed
+  at sub-grid (0.1 working-px) precision. Raising `WORK_XY` is costly — 3-D ridge
+  filtering scales superlinearly with grid size — so prefer raising `DISPLAY_XY` for
+  sharper viewing.
 - Registration is in voxel/pixel space and needs no calibration; the in-plane scale it
   recovers tells you the relative pixel size of the two stacks.
 - TIFFs and deformation fields are git-ignored (too large); the small landmark/transform
