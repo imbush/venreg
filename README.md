@@ -98,6 +98,21 @@ they appear in the file dropdowns automatically.
    warped cells overlaid, so matched cells coincide in colour.
    - Segmentation is done externally, so the app has **no Cellpose/PyTorch dependency**.
      Masks are resampled to the 256-px working grid, so a moderate-resolution mask is fine.
+   - *Generating masks:* a helper script is bundled (needs `pip install cellpose`, run
+     outside the app). It reads one channel of your hyperstack (memory-safe, so the mosaic
+     is fine), runs Cellpose, and writes a label TIFF:
+
+     ```bash
+     pip install cellpose
+     python -m venreg.segment_cells data/AVG_2X_2_hyperstack_manual.tif --channel 1
+     python -m venreg.segment_cells data/reference_mosaic.tif --channel 3 --res 768
+     # -> <stack>_ch<c>_masks.tif  (load it with "load masks A/B")
+     ```
+
+     `--mode 2d` (default) is per-slice + z-stitch (fast); `--mode 3d` is volumetric and
+     much slower. Uses MPS/CUDA when available. Or segment in the **Cellpose GUI** /
+     your own pipeline and save the masks as a label TIFF or `_seg.npy` — anything that
+     reads back as an instance-label volume of the same field works.
 
 Evaluate per **depth slice**, never by max-Z projection (a projection makes vessels at
 different depths look aligned when they aren't).
