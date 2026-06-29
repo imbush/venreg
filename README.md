@@ -40,9 +40,11 @@ they appear in the file dropdowns automatically.
 1. **Load a pair of TIFFs.** Pick file A and file B in the top bar and click **Load**
    (preprocessing builds the per-slice fluorescence views; vesselness is computed
    internally to drive the registration but isn't shown). Each panel has its own
-   **brightness**, **blur**, and **zoom** sliders, a **z-proj** toggle (additively
+   **brightness** (auto-set on load to a sensible exposure, since vessel fluorescence is
+   dim — adjust as needed), **blur**, and **zoom** sliders, a **z-proj** toggle (additively
    overlays that stack's full-depth max-Z projection for context), and a **marks** toggle
-   (hide/show the landmark markers when they obscure the image).
+   (hide/show the landmark markers when they obscure the image). These are display-only and
+   applied live in the browser.
    - *Multi-channel stacks:* for an ImageJ hyperstack (e.g. `ZCYX`) a **ch** dropdown
      appears next to each file (with the channel's ImageJ label when present) — pick the
      **vessel/venation channel** for each before loading; that channel drives the
@@ -54,8 +56,9 @@ they appear in the file dropdowns automatically.
      the channels that were registered.
    - *Large mosaics:* loading reads and downsamples **one z-plane at a time** (a multi-GB
      mosaic never loads in full, so peak RAM stays low). The fluorescence view is rendered
-     at a high display resolution (1024 px in-plane, sharp & zoomable for landmarking)
-     while vesselness and the registration fit run on the cheaper 256-px working grid.
+     at a high display resolution (up to 1024 px in-plane, capped at the image's native
+     size — sharp & zoomable for landmarking) while vesselness and the registration fit
+     run on the cheaper 256-px working grid.
 2. **Label corresponding points.** In the two-panel viewer: **wheel = zoom, drag = pan,
    click = drop a landmark, ↑/↓ = change z slice**. Click the same feature in A and in B
    (they share the *current pair #*), then **+ new pair** and repeat. Aim for **≥4 well-
@@ -102,7 +105,8 @@ run.py                 launch script
 venreg/
   imaging.py           TIFF load + downsample, vesselness / orientation
   registration.py      landmark fits (reflected similarity / affine, z-map), warp, Demons, eval
-  server.py            stdlib HTTP API (list / load / register / save) + static serving
+  server.py            stdlib HTTP API (list / load / channel / register / unwarp /
+                       result_channel / save) + static serving
 web/                   index.html, app.js, style.css  (the viewer)
 data/                  put your TIFFs here
 example/               bundled demo pair + landmarks + transforms
