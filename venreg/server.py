@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 from PIL import Image
 
-from . import imaging, registration as R
+from . import imaging, registration as R, cells as C
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -232,6 +232,73 @@ def api_result_channel(body):
     return {"ok": True, "mode": mode, "channel": c}
 
 
+def _png_rgb(rgb01, size=512):
+    im = (np.clip(rgb01, 0, 1) * 255).astype(np.uint8)
+    return Image.fromarray(im).resize((size, size), Image.NEAREST)   # crisp cell colours
+
+
+def _write_rgb_slices(rel, rgb):
+    import shutil
+    d = os.path.join(SESS, "slices", rel)
+    if os.path.isdir(d):
+        shutil.rmtree(d)
+    os.makedirs(d, exist_ok=True)
+    for z in range(rgb.shape[0]):
+        _png_rgb(rgb[z]).save(os.path.join(d, f"z{z:03d}.png"))
+
+
+def api_segment(body):
+    """Cellpose 3-D segment one channel of A or B; store labels + centroids (slow)."""
+    which, ch = body["which"], int(body["channel"])
+    diam = body.get("diameter") or None
+    mode = body.get("seg_mode", "2d")
+    v = S.get(which)
+    if not v:
+        return {"error": "not loaded"}
+    if not (0 <= ch < v.get("nchan", 1)):
+        return {"error": "bad channel"}
+    vol = imaging.load_volume(v["path"], channel=ch, work_xy=imaging.WORK_XY)[0]
+    try:
+        labels = C.segment(vol, diameter=diam, mode=mode)
+    except ImportError:
+        return {"error": "Cellpose not installed — run: pip install cellpose"}
+    ids, cen, sizes = C.centroids(labels)
+    with _lock:
+        v["cells"] = dict(labels=labels, ids=ids, centroids=cen, sizes=sizes, channel=int(ch))
+    return {"which": which, "n_cells": int(len(ids)), "channel": int(ch)}
+
+
+def api_match_cells(body):
+    """Match A's and B's segmented cells geometrically through the chosen registration,
+    colour matched pairs the same, and render the colored-cell slices + matching overlay."""
+    mode = body.get("mode", "rigid")
+    method = body.get("method", "hungarian")
+    max_dist = float(body.get("max_dist", 8))
+    A, B = S.get("A"), S.get("B")
+    res = S.get("results", {}).get(mode)
+    if not (A and B):
+        return {"error": "load a pair first"}
+    if "cells" not in A or "cells" not in B:
+        return {"error": "segment A and B first"}
+    if not res:
+        return {"error": f"generate the {mode} registration first"}
+    ca, cb = A["cells"], B["cells"]
+    M, field = np.asarray(res["matrix"]), res.get("field")
+    pairs = C.match(ca["centroids"], cb["centroids"], M, field, method=method, max_dist=max_dist)
+    colA, colB = C.assign_colors(ca["ids"], cb["ids"], pairs)
+    rgbA, rgbB = C.colorize(ca["labels"], colA), C.colorize(cb["labels"], colB)
+    # warp A's coloured cells into B's grid for the matching overlay
+    warpedA = np.stack([R.apply_warp(rgbA[..., k], M, B["shape"], field) for k in range(3)], axis=-1)
+    overlay = np.maximum(rgbB, warpedA)
+    with _lock:
+        _write_rgb_slices("A/cells", rgbA)
+        _write_rgb_slices("B/cells", rgbB)
+        _write_rgb_slices("cells_match", overlay)
+        S["match"] = dict(mode=mode, method=method, max_dist=max_dist, n=len(pairs))
+    return {"n_matched": int(len(pairs)), "nA": int(len(ca["ids"])), "nB": int(len(cb["ids"])),
+            "mode": mode, "method": method}
+
+
 def api_landmarks_list():
     """Saved landmark CSVs (working-voxel coords) available to reload, newest first."""
     fs = sorted(glob.glob(os.path.join(OUT, "*.csv")), key=os.path.getmtime, reverse=True)
@@ -269,7 +336,8 @@ def api_unwarp(body):
 ROUTES = {"/api/list": lambda b: api_list(), "/api/load": api_load,
           "/api/register": api_register, "/api/save": api_save, "/api/unwarp": api_unwarp,
           "/api/load_landmarks": api_load_landmarks, "/api/channel": api_channel,
-          "/api/result_channel": api_result_channel}
+          "/api/result_channel": api_result_channel,
+          "/api/segment": api_segment, "/api/match_cells": api_match_cells}
 
 
 class Handler(BaseHTTPRequestHandler):

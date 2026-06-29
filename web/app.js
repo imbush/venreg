@@ -1,7 +1,7 @@
 let man=null, cur=1, SF=0.5;           // SF = work_xy/512 (slice px -> working voxel)
 let st={A:{chan:0,z:0,zoom:1,px:0,py:0,zproj:false,bright:1,blur:0,showMarks:true},
         B:{chan:0,z:0,zoom:1,px:0,py:0,overlay:'__live__',pickMode:'normal',zproj:false,bright:1,blur:0,showMarks:true}};
-let lms={}, pendingA=null, pendingMark=null;
+let lms={}, pendingA=null, pendingMark=null, cellView=false;
 const imgs={};
 const off1=document.createElement('canvas'),o1=off1.getContext('2d');
 const off2=document.createElement('canvas'),o2=off2.getContext('2d');
@@ -66,6 +66,12 @@ function srcFor(v,z){return `slices/${v}/ch${st[v].chan}/z${String(z).padStart(3
 function draw(v){
  const s=st[v],ctx=$('cv'+v).getContext('2d');ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,512,512);
  $('zoom'+v).textContent=`zoom ${s.zoom.toFixed(1)}x`;
+ if(cellView){   // matched-cell visualiser: A=A's coloured cells, B=B's cells + warped-A overlaid
+   const src=v==='A'?`slices/A/cells/z${String(s.z).padStart(3,'0')}.png`
+                    :`slices/cells_match/z${String(s.z).padStart(3,'0')}.png`;
+   const im=getImg(src,()=>draw(v));
+   if(im.complete&&im.naturalWidth){ctx.setTransform(s.zoom,0,0,s.zoom,s.px,s.py);ctx.drawImage(im,0,0,512,512);}
+   ctx.setTransform(1,0,0,1,0,0);drawMarks(v,ctx);return;}
  const base=getImg(srcFor(v,s.z),()=>draw(v));
  const overlayOn=v==='B'&&s.overlay;
  if(!overlayOn){if(base.complete){ctx.setTransform(s.zoom,0,0,s.zoom,s.px,s.py);ctx.filter=filt(s);ctx.drawImage(base,0,0,512,512);ctx.filter='none';}
@@ -180,6 +186,23 @@ async function save(what){const r=await post('/api/save',{what,mode:$('savemode'
  $('savestatus').textContent=r.error?('error: '+r.error):('saved → '+r.saved);}
 function setLmFromRows(rows){lms={};rows.forEach((r,i)=>{lms[i+1]={A:{x:r[0],y:r[1],z:r[2]},B:{x:r[3],y:r[4],z:r[5]}};});
  newPair();renderTable();draw('A');draw('B');}
+
+// ---------- step 5: cells ----------
+function fillCellCh(v){const sel=$('cellCh'+v);if(!sel||!man)return;const m=man[v];
+ sel.innerHTML=Array.from({length:m.nchan||1},(_,c)=>`<option value="${c}">${(m.labels&&m.labels[c])||('ch'+c)}</option>`).join('');}
+async function segment(v){const ch=+$('cellCh'+v).value,sm=$('segmode').value;
+ $('cellstatus').textContent=`segmenting ${v} (Cellpose ${sm} — can take minutes)…`;
+ const r=await post('/api/segment',{which:v,channel:ch,seg_mode:sm});
+ $('cellstatus').textContent=r.error?('error: '+r.error):`${v}: ${r.n_cells} cells (ch${r.channel})`;}
+async function matchCells(){
+ $('cellstatus').textContent='matching cells…';
+ const r=await post('/api/match_cells',{mode:$('cellmode').value,method:$('cellmethod').value,max_dist:+$('cellmaxd').value});
+ if(r.error){$('cellstatus').textContent='error: '+r.error;return;}
+ Object.keys(imgs).forEach(k=>{if(k.includes('/cells/')||k.includes('cells_match'))delete imgs[k];}); // bust cache
+ if(!cellView)toggleCellView(); else {draw('A');draw('B');}
+ $('cellstatus').innerHTML=`<b>${r.n_matched}</b> matched · A ${r.nA} cells / B ${r.nB} cells · ${r.method} · ${r.mode}`;}
+function toggleCellView(){cellView=!cellView;const b=$('cellview');
+ b.textContent='cell view: '+(cellView?'ON':'OFF');b.style.background=cellView?'#2a7':'#333';draw('A');draw('B');}
 function parseLmCSV(text){return text.trim().split(/\r?\n/).map(l=>l.split(',').map(parseFloat))
  .filter(p=>p.length>=6&&p.slice(0,6).every(Number.isFinite)).map(p=>p.slice(0,6));}   // header rows parse to NaN -> dropped
 function loadLmFile(input){const f=input.files[0];if(!f){return;}const rd=new FileReader();
@@ -195,7 +218,7 @@ function loadLmFile(input){const f=input.files[0];if(!f){return;}const rd=new Fi
 function resetViewState(){   // keep st in sync with the freshly-rendered panel defaults
  st.A={chan:man.A.channel,z:0,zoom:1,px:0,py:0,zproj:false,bright:man.A.dispgain||1,blur:0,showMarks:true};
  st.B={chan:man.B.channel,z:0,zoom:1,px:0,py:0,overlay:'__live__',pickMode:'normal',zproj:false,bright:man.B.dispgain||1,blur:0,showMarks:true};
- pendingA=null;pendingMark=null;}
+ pendingA=null;pendingMark=null;cellView=false;}
 function buildViewer(r){
  man=r;SF=man.work_xy/512;Object.keys(imgs).forEach(k=>delete imgs[k]);resetViewState();
  $('wrap').innerHTML=panel('A')+panel('B');$('controls').style.display='';
@@ -203,7 +226,7 @@ function buildViewer(r){
    $('z'+v).addEventListener('input',e=>{st[v].z=+e.target.value;$('zl'+v).textContent=`z ${st[v].z}/${man[v].nz-1}`;draw(v);});
    setupCanvas(v);draw(v);});
  window.onkeydown=e=>{if(e.key==='ArrowUp')step('B',-1);if(e.key==='ArrowDown')step('B',1);};
- renderTable();}
+ fillCellCh('A');fillCellCh('B');renderTable();}
 let fileMeta={};   // path -> {n_channels, channel_labels}
 function fillChannels(fileSel,chSel,want){
  const m=fileMeta[$(fileSel).value]||{n_channels:1,channel_labels:null};

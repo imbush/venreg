@@ -41,6 +41,21 @@
     <button onclick="save('landmarks')">landmarks</button>
     <span id="savestatus" class="hint"></span>
   </div>
+  <div class="row">
+    <b>5. Cells</b>
+    A ch <select id="cellChA"></select>
+    B ch <select id="cellChB"></select>
+    <select id="segmode"><option value="2d">2D+stitch (fast)</option><option value="3d">full 3D (slow)</option></select>
+    <button onclick="segment('A')">segment A</button>
+    <button onclick="segment('B')">segment B</button>
+    — match using
+    <select id="cellmode"><option value="rigid">rigid</option><option value="warp">warp</option></select>
+    <select id="cellmethod"><option value="hungarian">hungarian (optimal)</option><option value="mnn">mutual-NN</option><option value="consistent">geometry-consistent</option></select>
+    dist <input type="range" id="cellmaxd" min="2" max="24" step="1" value="8" oninput="cellmaxdv.textContent=this.value" style="width:80px"><span id="cellmaxdv" class="hint">8</span>
+    <button onclick="matchCells()">match cells</button>
+    <button class="tbtn" id="cellview" onclick="toggleCellView()">cell view: OFF</button>
+    <span id="cellstatus" class="hint"></span>
+  </div>
   <table id="lmtab"><thead><tr><th>pair</th><th>A x,y,z</th><th>B x,y,z</th><th>resid px</th><th></th></tr></thead><tbody></tbody></table>
 </section>
 <script src="app.js"></script>
