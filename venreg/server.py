@@ -261,8 +261,12 @@ def api_load_masks(which, name, raw):
         return {"error": f"could not read masks: {e}"}
     nz = v["shape"][0]; w = imaging.WORK_XY
     mz, my, mx = native.shape
-    work = zoom(native, (nz / mz, w / my, w / mx), order=0).astype(np.int32)  # nearest: keep labels
-    ids, cen, sizes = C.centroids(work)
+    # centroids at the mask's native resolution (so dense cells aren't lost), then scale to
+    # the working grid; a downsampled label volume is kept only for the coloured cell view.
+    ids, cen, sizes = C.centroids(native)
+    if len(cen):
+        cen = cen * np.array([w / mx, w / my, nz / mz])
+    work = zoom(native, (nz / mz, w / my, w / mx), order=0).astype(np.int32)
     with _lock:
         v["cells"] = dict(labels=work, ids=ids, centroids=cen, sizes=sizes, channel=-1)
     return {"which": which, "n_cells": int(len(ids))}
