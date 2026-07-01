@@ -29,12 +29,14 @@ def tiff_info(path):
         return dict(axes=axes, shape=shape, n_channels=int(nc), channel_labels=labels)
 
 
-def load_volume(path, channel=0, work_xy=WORK_XY):
-    """Load one channel of a TIFF z-stack -> (vol float32 [0,1], info).
+def load_volume(path, channel=0, work_xy=WORK_XY, normalize=True):
+    """Load one channel of a TIFF z-stack -> (vol float32, info).
 
     Downsamples XY to work_xy (keeps z), reading and downscaling **one z-plane at a
     time via a lazy zarr view** so memory stays small even for multi-GB mosaics
-    (we never materialise the full-res volume or a float32 copy of it)."""
+    (we never materialise the full-res volume or a float32 copy of it).
+    normalize=True: contrast-stretch to [0,1] (default, for display/registration).
+    normalize=False: keep raw intensities (for a faithful merged export)."""
     import zarr
     with tifffile.TiffFile(path) as tf:
         s = tf.series[0]
@@ -60,8 +62,9 @@ def load_volume(path, channel=0, work_xy=WORK_XY):
             if yi > xi:                     # normalise to (Y, X)
                 plane = plane.T
             ds[z] = zoom(plane, (fy, fx), order=1)
-    lo, hi = np.percentile(ds, [1, 99.7])
-    ds = np.clip((ds - lo) / (hi - lo + 1e-9), 0, 1).astype(np.float32)
+    if normalize:
+        lo, hi = np.percentile(ds, [1, 99.7])
+        ds = np.clip((ds - lo) / (hi - lo + 1e-9), 0, 1).astype(np.float32)
     info = dict(orig_shape=[int(nz), int(ny), int(nx)], work_shape=list(ds.shape),
                 xy_downsample=float(nx / work_xy), channel=int(channel), axes=axes)
     return ds, info
