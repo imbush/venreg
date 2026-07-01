@@ -86,7 +86,8 @@ they appear in the file dropdowns automatically.
    app** — e.g. the [Cellpose](https://cellpose.org) GUI or your own pipeline, with your
    tuned parameters and hardware — then **load masks A / load masks B** (a label `.tif`,
    e.g. Cellpose `*_cp_masks.tif`, or a Cellpose `_seg.npy`). The app reads the instance
-   labels, resamples them to the working grid, and takes cell centroids. **Match cells**
+   labels and takes cell centroids at the mask's native resolution (scaled to the working
+   grid, so dense cells aren't lost). **Match cells**
    then pairs them through the chosen `rigid`/`warp` result. Matching is purely
    **geometric** — A's cell centroids are mapped into B's frame by the registration, then
    paired — because A and B are imaged differently (e.g. before vs after fixation), so
