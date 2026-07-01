@@ -98,21 +98,9 @@ they appear in the file dropdowns automatically.
    warped cells overlaid, so matched cells coincide in colour.
    - Segmentation is done externally, so the app has **no Cellpose/PyTorch dependency**.
      Masks are resampled to the 256-px working grid, so a moderate-resolution mask is fine.
-   - *Generating masks:* a helper script is bundled (needs `pip install cellpose`, run
-     outside the app). It reads one channel of your hyperstack (memory-safe, so the mosaic
-     is fine), runs Cellpose, and writes a label TIFF:
-
-     ```bash
-     pip install cellpose
-     python -m venreg.segment_cells data/AVG_2X_2_hyperstack_manual.tif --channel 1
-     python -m venreg.segment_cells data/reference_mosaic.tif --channel 3 --res 768
-     # -> <stack>_ch<c>_masks.tif  (load it with "load masks A/B")
-     ```
-
-     `--mode 2d` (default) is per-slice + z-stitch (fast); `--mode 3d` is volumetric and
-     much slower. Uses MPS/CUDA when available. Or segment in the **Cellpose GUI** /
-     your own pipeline and save the masks as a label TIFF or `_seg.npy` — anything that
-     reads back as an instance-label volume of the same field works.
+   - *Generating masks:* use the bundled **`segment_cells`** tool (see *Command-line
+     tools* below), the **Cellpose GUI**, or your own pipeline — anything that saves an
+     instance-label volume (label TIFF or `_seg.npy`) of the same field works.
 
 Evaluate per **depth slice**, never by max-Z projection (a projection makes vessels at
 different depths look aligned when they aren't).
@@ -130,6 +118,33 @@ different depths look aligned when they aren't).
 To reproduce in the app: Load A and B from the dropdowns, click **load saved landmarks**
 and pick `example/landmarks_work256.json`, then **Generate best RIGID / WARP**.
 
+## Command-line tools
+
+Small helper scripts run outside the web app (`python -m venreg.<tool> …`):
+
+- **`segment_cells`** — generate cell masks for Step 5. Reads one channel of a hyperstack
+  (memory-safe, so the mosaic is fine), runs Cellpose, writes a label TIFF
+  `<stack>_ch<c>_masks.tif`. Needs `pip install cellpose` (only for this tool).
+
+  ```bash
+  python -m venreg.segment_cells data/reference_mosaic.tif --channel 3 --res 1024
+  ```
+
+  `--channel` the cell/nuclei channel · `--res` in-plane segmentation size · `--mode 2d`
+  (per-slice + z-stitch, fast; default) or `3d` (volumetric, slow) · `--diameter` cell size
+  in px (default auto) · `--cpu` to force CPU (else MPS/CUDA).
+
+- **`merge_masks`** — merge a stack's original channels **and** all its produced masks into
+  one ZCYX ImageJ hyperstack (each a separate, labeled channel, aligned on the masks'
+  working grid). Auto-finds `<stack>_ch*_masks.tif`.
+
+  ```bash
+  python -m venreg.merge_masks data/reference_mosaic.tif
+  # -> data/reference_mosaic_merged.tif  (open in Fiji; apply a random LUT to mask channels)
+  ```
+
+  `--masks a.tif b.tif …` to choose specific masks · `--out path` for the output.
+
 ## Layout
 
 ```
@@ -138,8 +153,10 @@ venreg/
   imaging.py           TIFF load + downsample, vesselness / orientation
   registration.py      landmark fits (reflected similarity / affine, z-map), warp, Demons, eval
   cells.py             read pre-computed cell masks + geometric cell matching (step 5)
+  segment_cells.py     CLI: Cellpose-segment a channel -> label TIFF (needs cellpose)
+  merge_masks.py       CLI: merge original channels + masks -> one hyperstack
   server.py            stdlib HTTP API (list / load / channel / register / unwarp /
-                       result_channel / save) + static serving
+                       result_channel / match_cells / save) + static serving
 web/                   index.html, app.js, style.css  (the viewer)
 data/                  put your TIFFs here
 example/               bundled demo pair + landmarks + transforms
