@@ -1,17 +1,18 @@
-"""Drop dim cells from a mask by measuring each cell's signal in its source channel.
+"""Drop "shadow" cells from a mask using LOCAL contrast (polarity), not absolute brightness.
 
-Cellpose segments by shape, not brightness, so background fluorescence makes dim "shadow"
-cells get segmented alongside the real bright ones. This measures every segmented cell's
-intensity in the channel it came from (above a local background estimate) and keeps only
-cells above a threshold -- no re-segmentation needed.
+Cellpose segments by shape, so with background tissue fluorescence, non-labelled cells get
+segmented too — they show up as *shadows* (darker than the surrounding background), whereas
+real GCaMP+ cells are *brighter* than their surroundings. So the right test is local
+contrast: for each segmented cell, compare its intensity to a local background estimated
+from the nearby non-cell pixels, and drop cells that are darker than their surroundings.
+(An absolute-brightness cut wrongly removes good cells that sit in dim regions.)
 
     python -m venreg.filter_masks data/reference_mosaic.tif --channel 1 \
         --mask data/reference_mosaic_ch1_masks.tif
-    # -> <mask>_filtered.tif  + a <mask>_intensity.png histogram to check the threshold
+    # -> <mask>_filtered.tif  + <mask>_contrast.png (histogram; keep = contrast >= thresh)
 
-Threshold: Otsu on the per-cell signal by default; override with --thresh T, or
---keep-percentile P (drop the dimmest P%). --no-bg measures raw intensity (no background
-subtraction). --bg-sigma sets the background length scale (px).
+--thresh sets the contrast margin (default 0: keep cells at least as bright as their
+surroundings). --surround px sets the local-background window size.
 """
 import argparse
 import os
@@ -21,15 +22,28 @@ import tifffile
 from . import imaging, cells as C
 
 
+def local_contrast(chan, labels, ids, surround=51):
+    """Per-cell (cell_mean - local_background), where local background is the mean of the
+    nearby NON-cell pixels (per z-slice) — so dense neighbours don't bias it."""
+    from scipy.ndimage import uniform_filter, mean as ndi_mean
+    notcell = (labels == 0).astype(np.float32)
+    bg = np.empty_like(chan, dtype=np.float32)
+    for z in range(chan.shape[0]):
+        num = uniform_filter(chan[z] * notcell[z], surround, mode="reflect")
+        den = uniform_filter(notcell[z], surround, mode="reflect")
+        bg[z] = num / np.maximum(den, 1e-6)
+    cell_mean = np.asarray(ndi_mean(chan, labels, ids))
+    surround_mean = np.asarray(ndi_mean(bg, labels, ids))
+    return cell_mean - surround_mean
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Filter dim cells out of a mask by channel intensity")
+    ap = argparse.ArgumentParser(description="Drop shadow cells (darker than surroundings) from a mask")
     ap.add_argument("tiff", help="the original hyperstack the mask came from")
     ap.add_argument("--mask", required=True, help="the mask TIFF/_seg.npy to filter")
     ap.add_argument("--channel", type=int, required=True, help="channel index the cells were segmented from")
-    ap.add_argument("--thresh", type=float, default=None, help="keep cells with signal >= this (default: Otsu)")
-    ap.add_argument("--keep-percentile", type=float, default=None, help="instead, drop the dimmest P%% of cells")
-    ap.add_argument("--bg-sigma", type=float, default=25.0, help="background length scale in px (0 = raw)")
-    ap.add_argument("--no-bg", action="store_true", help="measure raw intensity (no background subtraction)")
+    ap.add_argument("--thresh", type=float, default=0.0, help="keep cells with (cell-surround) >= this (default 0)")
+    ap.add_argument("--surround", type=int, default=51, help="local-background window size in px (default 51)")
     ap.add_argument("--out", default=None, help="output mask (default: <mask>_filtered.tif)")
     args = ap.parse_args()
 
@@ -39,24 +53,9 @@ def main():
     if labels.shape[0] != chan.shape[0]:
         raise SystemExit(f"z mismatch: mask {labels.shape} vs channel {chan.shape}")
 
-    sig_img = chan
-    if not args.no_bg and args.bg_sigma > 0:                 # subtract per-slice low-freq background
-        from scipy.ndimage import gaussian_filter
-        bg = np.stack([gaussian_filter(chan[z], args.bg_sigma) for z in range(chan.shape[0])])
-        sig_img = np.clip(chan - bg, 0, None)
-
-    from scipy import ndimage as ndi
     ids = np.unique(labels); ids = ids[ids > 0]
-    signal = np.asarray(ndi.mean(sig_img, labels, ids))      # per-cell mean signal
-
-    if args.keep_percentile is not None:
-        thr = np.percentile(signal, args.keep_percentile)
-    elif args.thresh is not None:
-        thr = args.thresh
-    else:
-        from skimage.filters import threshold_otsu
-        thr = float(threshold_otsu(signal))
-    keep = signal >= thr
+    contrast = local_contrast(chan, labels, ids, surround=args.surround)
+    keep = contrast >= args.thresh
     drop_ids = ids[~keep]
 
     filt = labels.copy()
@@ -64,19 +63,23 @@ def main():
     out = args.out or os.path.splitext(args.mask)[0] + "_filtered.tif"
     tifffile.imwrite(out, filt.astype(labels.dtype))
     print(f"cells: {len(ids)} -> kept {int(keep.sum())}  dropped {int((~keep).sum())}  "
-          f"(threshold={thr:.3g}, {'raw' if args.no_bg else f'bg-sub sigma={args.bg_sigma}'})")
-    print(f"per-cell signal percentiles: p10={np.percentile(signal,10):.3g} p50={np.percentile(signal,50):.3g} "
-          f"p90={np.percentile(signal,90):.3g} max={signal.max():.3g}")
+          f"(darker-than-surround; thresh={args.thresh}, surround={args.surround}px)")
+    print(f"local contrast (cell-surround): p10={np.percentile(contrast,10):.3g} "
+          f"p50={np.percentile(contrast,50):.3g} p90={np.percentile(contrast,90):.3g}  "
+          f"negative (darker)={int((contrast<0).sum())}")
     print(f"wrote {out}")
 
     try:
         import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        ax.hist(signal, bins=80, color="#0072B2")
-        ax.axvline(thr, color="#D55E00", ls="--", label=f"threshold {thr:.3g}\nkeep {int(keep.sum())} / drop {int((~keep).sum())}")
-        ax.set_xlabel("per-cell signal" + ("" if args.no_bg else " (background-subtracted)"))
-        ax.set_ylabel("# cells"); ax.legend(); ax.set_title(os.path.basename(args.mask))
-        fig.tight_layout(); png = os.path.splitext(out)[0].replace("_filtered", "") + "_intensity.png"
+        lim = np.percentile(np.abs(contrast), 99)
+        ax.hist(np.clip(contrast, -lim, lim), bins=80, color="#0072B2")
+        ax.axvline(args.thresh, color="#D55E00", ls="--",
+                   label=f"thresh {args.thresh:g}\nkeep {int(keep.sum())} / drop {int((~keep).sum())}")
+        ax.axvline(0, color="k", lw=0.6)
+        ax.set_xlabel("cell − local surround (brighter →)"); ax.set_ylabel("# cells")
+        ax.legend(); ax.set_title(os.path.basename(args.mask))
+        fig.tight_layout(); png = os.path.splitext(out)[0].replace("_filtered", "") + "_contrast.png"
         fig.savefig(png, dpi=110); print(f"histogram -> {png}")
     except Exception as e:
         print("(no histogram:", e, ")")

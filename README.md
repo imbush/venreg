@@ -134,19 +134,22 @@ Small helper scripts run outside the web app (`python -m venreg.<tool> …`):
   (per-slice + z-stitch, fast; default) or `3d` (volumetric, slow) · `--diameter` cell size
   in px (default auto) · `--cpu` to force CPU (else MPS/CUDA).
 
-- **`filter_masks`** — drop dim "shadow" cells from a mask. Cellpose segments by shape, so
-  background fluorescence gets non-labelled cells segmented too; this measures each cell's
-  intensity in its source channel (above a local background) and keeps only the bright ones.
+- **`filter_masks`** — drop "shadow" cells from a mask by **local contrast**. Cellpose
+  segments by shape, so background fluorescence gets non-labelled cells segmented too —
+  they appear *darker* than their surroundings, while real cells are *brighter*. This
+  compares each cell to a local background (nearby non-cell pixels) and drops only cells
+  darker than their surroundings (an absolute-brightness cut wrongly removes good cells in
+  dim regions).
 
   ```bash
   python -m venreg.filter_masks data/reference_mosaic.tif --channel 1 \
       --mask data/reference_mosaic_ch1_masks.tif
-  # -> <mask>_filtered.tif + <mask>_intensity.png (histogram to check the cut)
+  # -> <mask>_filtered.tif + <mask>_contrast.png (cell−surround histogram)
   ```
 
-  Threshold is Otsu by default; tune with `--thresh T` or `--keep-percentile P`. `--no-bg`
-  measures raw intensity; `--bg-sigma` sets the background scale. Load the `_filtered.tif`
-  in the app / feed it to `merge_masks`.
+  `--thresh` sets the contrast margin (default 0 = keep cells at least as bright as their
+  surroundings; raise it to be stricter). `--surround` sets the local-background window
+  (px). Load the `_filtered.tif` in the app / feed it to `merge_masks`.
 
 - **`merge_masks`** — merge a stack's original channels **and** all its produced masks into
   one ZCYX ImageJ hyperstack (each a separate, labeled channel, aligned on the masks'
