@@ -145,8 +145,11 @@ def assign_colors(idsA, idsB, pairs):
 
 
 def colorize(labels, color_of):
-    """Label volume + {id: rgb} -> RGB float volume (z,y,x,3) in [0,1]."""
-    out = np.zeros(labels.shape + (3,), np.float32)
+    """Label volume + {id: rgb} -> RGB float volume (z,y,x,3) in [0,1]. Uses a colour LUT
+    indexed by label id (O(voxels), not O(cells x voxels)) so it stays fast for many cells."""
+    maxid = int(labels.max()) if labels.size else 0
+    lut = np.zeros((maxid + 1, 3), np.float32)
     for cid, rgb in color_of.items():
-        out[labels == cid] = rgb
-    return out
+        if 0 <= cid <= maxid:
+            lut[cid] = rgb
+    return lut[labels]
