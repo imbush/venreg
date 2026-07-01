@@ -134,6 +134,20 @@ Small helper scripts run outside the web app (`python -m venreg.<tool> …`):
   (per-slice + z-stitch, fast; default) or `3d` (volumetric, slow) · `--diameter` cell size
   in px (default auto) · `--cpu` to force CPU (else MPS/CUDA).
 
+- **`filter_masks`** — drop dim "shadow" cells from a mask. Cellpose segments by shape, so
+  background fluorescence gets non-labelled cells segmented too; this measures each cell's
+  intensity in its source channel (above a local background) and keeps only the bright ones.
+
+  ```bash
+  python -m venreg.filter_masks data/reference_mosaic.tif --channel 1 \
+      --mask data/reference_mosaic_ch1_masks.tif
+  # -> <mask>_filtered.tif + <mask>_intensity.png (histogram to check the cut)
+  ```
+
+  Threshold is Otsu by default; tune with `--thresh T` or `--keep-percentile P`. `--no-bg`
+  measures raw intensity; `--bg-sigma` sets the background scale. Load the `_filtered.tif`
+  in the app / feed it to `merge_masks`.
+
 - **`merge_masks`** — merge a stack's original channels **and** all its produced masks into
   one ZCYX ImageJ hyperstack (each a separate, labeled channel, aligned on the masks'
   working grid). Auto-finds `<stack>_ch*_masks.tif`.
@@ -154,6 +168,7 @@ venreg/
   registration.py      landmark fits (reflected similarity / affine, z-map), warp, Demons, eval
   cells.py             read pre-computed cell masks + geometric cell matching (step 5)
   segment_cells.py     CLI: Cellpose-segment a channel -> label TIFF (needs cellpose)
+  filter_masks.py      CLI: drop dim "shadow" cells from a mask by channel intensity
   merge_masks.py       CLI: merge original channels + masks -> one hyperstack
   server.py            stdlib HTTP API (list / load / channel / register / unwarp /
                        result_channel / match_cells / save) + static serving
