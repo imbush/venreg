@@ -152,6 +152,20 @@ Small helper scripts run outside the web app (`python -m venreg.<tool> …`):
   surroundings; raise it to be stricter). `--surround` sets the local-background window
   (px). Load the `_filtered.tif` in the app / feed it to `merge_masks`.
 
+- **`pipeline`** — headless end-to-end: use the most recent saved landmarks to pre-register
+  (best WARP: affine + Demons) on the **venation** channel, then a **Soma-print** (TRU-FACT,
+  Wang et al.) match of the **cell/GCaMP** channels, with per-match likelihood ratio /
+  posterior. Writes matches CSV, transform, and a colored matched-cell overlay.
+
+  ```bash
+  python -m venreg.pipeline --veins-a 1 --cells-a 0 --veins-b 0 --cells-b 1
+  ```
+
+  Soma-print registers cells by neighbour-constellation "Soma-prints" (vectors to m nearest
+  neighbours), multi-round with empirical-Bayes confidence (accept likelihood-ratio < 0.05);
+  it needs a decent pre-alignment + corresponding cell populations in both channels.
+  Also selectable as the matcher in the app's Step 5. Params: `--sp-radius/-m-a/-m-b/-n/-lr`.
+
 - **`merge_masks`** — merge a stack's original channels **and** all its produced masks into
   one ZCYX ImageJ hyperstack (each a separate, labeled channel, aligned on the masks'
   working grid). Auto-finds `<stack>_ch*_masks.tif`.
