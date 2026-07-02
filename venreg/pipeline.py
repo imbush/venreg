@@ -31,9 +31,9 @@ def _recent_landmarks():
     return fs[0] if fs else None
 
 
-def _cell_centroids(mask_path, stack, channel, nz_work, do_filter, thresh, surround):
+def _cell_centroids(mask_path, stack, channel, nz_work, do_filter, thresh, surround, work_xy):
     """Load a mask, optionally drop shadow cells (darker than local surround) using the
-    stack's channel, and return centroids in the WORK_XY working grid + the native labels."""
+    stack's channel, and return centroids in the working grid (work_xy) + native labels."""
     native = C.read_masks(open(mask_path, "rb").read(), mask_path)
     mz, my, mx = native.shape
     dropped = 0
@@ -45,9 +45,8 @@ def _cell_centroids(mask_path, stack, channel, nz_work, do_filter, thresh, surro
         if dropped:
             native = native.copy(); native[np.isin(native, drop)] = 0
     ids, cen, sizes = C.centroids(native)
-    W = imaging.WORK_XY
     if len(cen):
-        cen = cen * np.array([W / mx, W / my, nz_work / mz])
+        cen = cen * np.array([work_xy / mx, work_xy / my, nz_work / mz])
     return ids, cen, native, dropped
 
 
@@ -71,7 +70,11 @@ def main():
     ap.add_argument("--filter-thresh", type=float, default=0.0)
     ap.add_argument("--out", default=None, help="output prefix (default: output/pipeline_<timestamp>)")
     ap.add_argument("--no-overlay", action="store_true", help="skip the colored matched-cell overlay TIFF")
+    ap.add_argument("--reg-res", type=int, default=imaging.WORK_XY,
+                    help="in-plane resolution for the fit + matching (default 256; higher = finer "
+                         "but vesselness/Demons get much slower)")
     args = ap.parse_args()
+    W = args.reg_res
 
     A = args.A if os.path.isabs(args.A) else os.path.join(ROOT, args.A)
     B = args.B if os.path.isabs(args.B) else os.path.join(ROOT, args.B)
@@ -83,14 +86,15 @@ def main():
     out = args.out or os.path.join(OUT, "pipeline_" + time.strftime("%Y%m%d_%H%M%S"))
     print(f"landmarks: {os.path.relpath(lm, ROOT)}  ({len(L)} pairs)")
 
-    # 1) pre-register on the venation channel: best WARP (affine + Demons)
-    print(f"registering veins:  A ch{args.veins_a} <- B ch{args.veins_b} …")
+    # 1) pre-register on the venation channel: best WARP (affine + Demons), at reg-res W
+    print(f"registering veins:  A ch{args.veins_a} <- B ch{args.veins_b}  @ {W}px …")
     t = time.time()
-    dsA, infoA = imaging.load_volume(A, channel=args.veins_a)
-    dsB, infoB = imaging.load_volume(B, channel=args.veins_b)
+    dsA, infoA = imaging.load_volume(A, channel=args.veins_a, work_xy=W)
+    dsB, infoB = imaging.load_volume(B, channel=args.veins_b, work_xy=W)
     nzA, nzB = dsA.shape[0], dsB.shape[0]
     vesA, vesB = imaging.vesselness(dsA), imaging.vesselness(dsB)
-    fit = R.fit_affine(L) if len(L) >= 3 else R.fit_rigid(L)
+    Lw = L.copy(); Lw[:, [0, 1, 3, 4]] *= W / imaging.WORK_XY   # landmarks are saved in 256 coords
+    fit = R.fit_affine(Lw) if len(Lw) >= 3 else R.fit_rigid(Lw)
     M = np.asarray(fit["matrix"])
     outshape = list(dsB.shape)
     field = R.deformable(vesB, R.warp_volume(vesA, M, outshape))
@@ -103,8 +107,8 @@ def main():
         if not os.path.isfile(p):
             raise SystemExit(f"mask not found: {p} (run venreg.segment_cells or pass --masks-a/-b)")
     do_filter = not args.no_filter
-    idsA, cA, labA, dropA = _cell_centroids(ma, A, args.cells_a, nzA, do_filter, args.filter_thresh, 51)
-    idsB, cB, labB, dropB = _cell_centroids(mb, B, args.cells_b, nzB, do_filter, args.filter_thresh, 51)
+    idsA, cA, labA, dropA = _cell_centroids(ma, A, args.cells_a, nzA, do_filter, args.filter_thresh, 51, W)
+    idsB, cB, labB, dropB = _cell_centroids(mb, B, args.cells_b, nzB, do_filter, args.filter_thresh, 51, W)
     print(f"cells: A ch{args.cells_a} {len(idsA)} (dropped {dropA} shadows)  |  "
           f"B ch{args.cells_b} {len(idsB)} (dropped {dropB} shadows)")
 
@@ -132,7 +136,6 @@ def main():
     print(f"  transform -> {os.path.relpath(out + '_transform_matrix.npy', ROOT)} (+ _deformation.nii.gz)")
 
     if not args.no_overlay and pairs:
-        W = imaging.WORK_XY
         from scipy.ndimage import zoom
         labAw = zoom(labA, (nzA / labA.shape[0], W / labA.shape[1], W / labA.shape[2]), order=0).astype(np.int32)
         labBw = zoom(labB, (nzB / labB.shape[0], W / labB.shape[1], W / labB.shape[2]), order=0).astype(np.int32)
