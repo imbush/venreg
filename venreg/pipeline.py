@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--reg-res", type=int, default=imaging.WORK_XY,
                     help="in-plane resolution for the fit + matching (default 256; higher = finer "
                          "but vesselness/Demons get much slower)")
+    ap.add_argument("--reg-on", choices=["vesselprob", "vesselness", "vesselmask", "fluor"],
+                    default="vesselprob", help="representation the deformable registers on "
+                    "(default vesselprob: intensity-invariant, lumen-filled vessel probability)")
     args = ap.parse_args()
     W = args.reg_res
 
@@ -92,14 +95,30 @@ def main():
     dsA, infoA = imaging.load_volume(A, channel=args.veins_a, work_xy=W)
     dsB, infoB = imaging.load_volume(B, channel=args.veins_b, work_xy=W)
     nzA, nzB = dsA.shape[0], dsB.shape[0]
-    sig = tuple(x * W / imaging.WORK_XY for x in (1.5, 2.5, 3.5))   # scale ridge sigmas to reg-res
-    vesA, vesB = imaging.vesselness(dsA, sigmas=sig), imaging.vesselness(dsB, sigmas=sig)
-    Lw = L.copy(); Lw[:, [0, 1, 3, 4]] *= W / imaging.WORK_XY   # landmarks are saved in 256 coords
+    scale = W / imaging.WORK_XY
+    sig = tuple(x * scale for x in (1.5, 2.5, 3.5))                 # scale ridge sigmas to reg-res
+    close = int(round(2 * scale))                                  # lumen-fill grows with resolution
+    def rep(ds):
+        if args.reg_on == "fluor":
+            return ds
+        if args.reg_on == "vesselness":
+            return imaging.vesselness(ds, sigmas=sig)
+        vp = imaging.vessel_prob(ds, sigmas=sig, close_radius=close)
+        return (vp > 0.15).astype(np.float32) if args.reg_on == "vesselmask" else vp
+    repA, repB = rep(dsA), rep(dsB)
+    Lw = L.copy(); Lw[:, [0, 1, 3, 4]] *= scale                    # landmarks are saved in 256 coords
     fit = R.fit_affine(Lw) if len(Lw) >= 3 else R.fit_rigid(Lw)
     M = np.asarray(fit["matrix"])
     outshape = list(dsB.shape)
-    field = R.deformable(vesB, R.warp_volume(vesA, M, outshape))
-    print(f"  warp fit ({fit['kind']}) + deformable in {time.time()-t:.1f}s")
+    warpedRepA = R.warp_volume(repA, M, outshape)
+    field = R.deformable(repB, warpedRepA)
+    # registration quality: Dice of warped-A vs B vessel footprint, before/after deformable
+    def dice(a, b):
+        ma, mb = a > 0.12, b > 0.12
+        return 2 * (ma & mb).sum() / (ma.sum() + mb.sum() + 1e-9)
+    warpedRepA_def = R.apply_warp(repA, M, outshape, field)
+    print(f"  warp fit ({fit['kind']}) + deformable on '{args.reg_on}' @ {W}px in {time.time()-t:.1f}s")
+    print(f"  vessel Dice(warpedA,B): affine {dice(warpedRepA, repB):.3f} -> +deformable {dice(warpedRepA_def, repB):.3f}")
 
     # 2) cell centroids from the GCaMP masks (shadow-filtered), in the working grid
     ma = args.masks_a or os.path.splitext(A)[0] + f"_ch{args.cells_a}_masks.tif"

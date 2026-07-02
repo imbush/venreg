@@ -75,6 +75,21 @@ def vesselness(vol01, sigmas=(1.5, 2.5, 3.5)):
     return (v / (v.max() + 1e-9)).astype(np.float32)
 
 
+def vessel_prob(vol01, sigmas=(1.5, 2.5, 3.5), close_radius=0, smooth=1.0):
+    """Intensity-invariant vessel probability map [0,1] for registration. Multi-scale ridge
+    (Sato) + optional per-slice grey-closing to fill hollow-tube lumens at high resolution +
+    light smoothing so the deformable (Demons) has smooth gradients to follow. Because it is
+    a ridge response, it is comparable across images with different fluorescence levels."""
+    from scipy.ndimage import grey_closing, gaussian_filter
+    v = sato(vol01, sigmas=list(sigmas), black_ridges=False).astype(np.float32)
+    if close_radius > 0:                              # bridge dark lumens of resolved tubes
+        k = int(2 * close_radius + 1)
+        v = np.stack([grey_closing(v[z], size=(k, k)) for z in range(v.shape[0])])
+    if smooth > 0:
+        v = np.stack([gaussian_filter(v[z], smooth) for z in range(v.shape[0])])
+    return (v / (v.max() + 1e-9)).astype(np.float32)
+
+
 def mask_of(ves, thr_scale=0.5, min_size=64):
     from skimage.morphology import remove_small_objects
     m = ves > threshold_otsu(ves) * thr_scale
