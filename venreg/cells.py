@@ -138,26 +138,31 @@ def _greedy_mean(U, V, n):
     return tot / m
 
 
-def _two_gauss_em(x, iters=300):
-    """1-D 2-component Gaussian mixture (returns weights, means, stds; comp 0 = lower mean)."""
-    x = np.asarray(x, float)
-    mu = np.percentile(x, [20, 65]).astype(float)
-    sig = np.full(2, x.std() / 2 + 1e-6); w = np.array([0.5, 0.5])
-    for _ in range(iters):
-        p = np.stack([w[k] * np.exp(-0.5 * ((x - mu[k]) / sig[k]) ** 2) / (sig[k] * np.sqrt(2 * np.pi))
-                      for k in range(2)])
-        p /= p.sum(0) + 1e-300
-        for k in range(2):
-            nk = p[k].sum() + 1e-9
-            mu[k] = (p[k] * x).sum() / nk
-            sig[k] = np.sqrt((p[k] * (x - mu[k]) ** 2).sum() / nk) + 1e-6
-            w[k] = nk / len(x)
-    o = np.argsort(mu)
-    return w[o], mu[o], sig[o]
-
-
 def _gauss(x, mu, sig):
     return np.exp(-0.5 * ((x - mu) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+
+
+def _empirical_bayes_lr(best, second, have, iters=400):
+    """Per-match likelihood ratio of incorrect vs. correct (Wang et al. empirical Bayes).
+    Works on match COSTS (lower=better). The *incorrect* model is pinned from the 2nd-best
+    costs (a clean estimate of mismatches); the best costs are a mixture of that incorrect
+    Gaussian + a free 'correct' Gaussian (low cost). Returns LR for every entry (inf where
+    unavailable); accept matches with LR < threshold."""
+    b, s = best[have], second[have]
+    mu_i, sig_i = float(np.mean(s)), float(np.std(s) + 1e-6)      # incorrect (from 2nd-best)
+    mu_c, sig_c = float(np.percentile(b, 20)), float(np.std(b) / 2 + 1e-6)
+    wc, wi = 0.5, 0.5
+    for _ in range(iters):                                         # EM, incorrect comp fixed
+        pc, pi = wc * _gauss(b, mu_c, sig_c), wi * _gauss(b, mu_i, sig_i)
+        rc = pc / (pc + pi + 1e-300); nc = rc.sum() + 1e-9
+        mu_c = (rc * b).sum() / nc
+        sig_c = np.sqrt((rc * (b - mu_c) ** 2).sum() / nc) + 1e-6
+        wc = nc / len(b); wi = 1 - wc
+    num = wi * _gauss(best, mu_i, sig_i)
+    den = wc * _gauss(best, mu_c, sig_c)
+    lr = np.where(den > 0, num / (den + 1e-300), np.inf)
+    lr[~np.isfinite(best)] = np.inf
+    return lr
 
 
 def soma_print_match(cA, cB, M, field=None, m_a=15, m_b=30, n=10, radius=None,
@@ -179,7 +184,7 @@ def soma_print_match(cA, cB, M, field=None, m_a=15, m_b=30, n=10, radius=None,
     _, vB = _neighbor_vectors(cBa, m_b)
     cand = [np.array(treeB.query_ball_point(cA[i], radius), dtype=int) for i in range(len(cA))]
 
-    matchB = np.full(len(cA), -1, int); lr_of = np.full(len(cA), np.nan)
+    matchB = np.full(len(cA), -1, int); lr_of = np.full(len(cA), np.nan); prev_n = -1
     for rnd in range(rounds):
         best_j = np.full(len(cA), -1, int); best_c = np.full(len(cA), np.inf)
         second_c = np.full(len(cA), np.inf)
@@ -205,21 +210,20 @@ def soma_print_match(cA, cB, M, field=None, m_a=15, m_b=30, n=10, radius=None,
         have = np.isfinite(best_c) & np.isfinite(second_c)
         if have.sum() < 10:
             break
-        w, mu, sig = _two_gauss_em(best_c[have])             # comp0 correct (low), comp1 incorrect
-        p_cor = w[0] * _gauss(best_c, mu[0], sig[0])
-        p_inc = w[1] * _gauss(best_c, mu[1], sig[1])
-        lr = np.where(p_cor > 0, p_inc / (p_cor + 1e-300), np.inf)
+        lr = _empirical_bayes_lr(best_c, second_c, have)     # incorrect model pinned from 2nd-best
         # accept, resolving B-cell conflicts by lowest cost
         order = np.argsort(best_c)
-        matchB = np.full(len(cA), -1, int); lr_of = np.full(len(cA), np.nan); usedB = set()
+        mB = np.full(len(cA), -1, int); lof = np.full(len(cA), np.nan); usedB = set()
         for i in order:
             j = best_j[i]
             if j < 0 or not np.isfinite(best_c[i]) or lr[i] >= lr_thresh or j in usedB:
                 continue
-            matchB[i] = j; lr_of[i] = lr[i]; usedB.add(int(j))
-        if rnd > 0 and (matchB >= 0).sum() <= prev_n:       # converged
-            pass
-        prev_n = (matchB >= 0).sum()
+            mB[i] = j; lof[i] = lr[i]; usedB.add(int(j))
+        n = int((mB >= 0).sum())
+        matchB, lr_of = mB, lof
+        if rnd > 0 and prev_n > 0 and (n - prev_n) < 0.05 * prev_n:   # <5% new matches -> converged
+            prev_n = n; break
+        prev_n = n
 
     pairs = [(int(i), int(matchB[i])) for i in range(len(cA)) if matchB[i] >= 0]
     info = {(int(i), int(matchB[i])): {"lr": float(lr_of[i]),

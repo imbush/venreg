@@ -26,7 +26,8 @@ OUT = os.path.join(ROOT, "output")
 
 
 def _recent_landmarks():
-    fs = sorted(glob.glob(os.path.join(OUT, "*.csv")), key=os.path.getmtime, reverse=True)
+    # only the app's saved landmark files (landmarks_<ts>.csv), not our own outputs
+    fs = sorted(glob.glob(os.path.join(OUT, "landmarks_*.csv")), key=os.path.getmtime, reverse=True)
     return fs[0] if fs else None
 
 
@@ -54,10 +55,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--A", default="data/AVG_2X_2_hyperstack_manual.tif")
     ap.add_argument("--B", default="data/reference_mosaic.tif")
-    ap.add_argument("--veins-a", type=int, default=0, help="A venation channel (registration)")
+    ap.add_argument("--veins-a", type=int, default=1, help="A venation channel (registration)")
     ap.add_argument("--veins-b", type=int, default=0, help="B venation channel (registration)")
-    ap.add_argument("--cells-a", type=int, default=0, help="A cell/GCaMP channel")
+    ap.add_argument("--cells-a", type=int, default=0, help="A cell/GCaMP (soma) channel")
     ap.add_argument("--cells-b", type=int, default=1, help="B cell/GCaMP channel")
+    ap.add_argument("--sp-radius", type=float, default=None, help="Soma-print candidate radius (working px; default auto)")
+    ap.add_argument("--sp-m-a", type=int, default=15, help="Soma-print neighbour pool for A")
+    ap.add_argument("--sp-m-b", type=int, default=30, help="Soma-print neighbour pool for B (denser)")
+    ap.add_argument("--sp-n", type=int, default=10, help="Soma-print vectors scored per pair")
+    ap.add_argument("--sp-lr", type=float, default=0.05, help="accept matches with likelihood ratio < this")
     ap.add_argument("--landmarks", default=None, help="landmark CSV (default: most recent in output/)")
     ap.add_argument("--masks-a", default=None, help="A mask TIFF (default: <A>_ch<cells-a>_masks.tif)")
     ap.add_argument("--masks-b", default=None, help="B mask TIFF (default: <B>_ch<cells-b>_masks.tif)")
@@ -105,7 +111,8 @@ def main():
     # 3) Soma-print match through the warp
     print("Soma-print matching …")
     t = time.time()
-    pairs, info = C.soma_print_match(cA, cB, M, field)
+    pairs, info = C.soma_print_match(cA, cB, M, field, m_a=args.sp_m_a, m_b=args.sp_m_b,
+                                     n=args.sp_n, radius=args.sp_radius, lr_thresh=args.sp_lr)
     probs = np.array([info[p]["prob_correct"] for p in pairs]) if pairs else np.array([])
     print(f"  matched {len(pairs)} cells in {time.time()-t:.1f}s  "
           f"(A {len(idsA)} / B {len(idsB)}; median P(correct)={np.median(probs):.3f})" if pairs else "  no matches")
