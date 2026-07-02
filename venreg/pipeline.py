@@ -92,7 +92,8 @@ def main():
     dsA, infoA = imaging.load_volume(A, channel=args.veins_a, work_xy=W)
     dsB, infoB = imaging.load_volume(B, channel=args.veins_b, work_xy=W)
     nzA, nzB = dsA.shape[0], dsB.shape[0]
-    vesA, vesB = imaging.vesselness(dsA), imaging.vesselness(dsB)
+    sig = tuple(x * W / imaging.WORK_XY for x in (1.5, 2.5, 3.5))   # scale ridge sigmas to reg-res
+    vesA, vesB = imaging.vesselness(dsA, sigmas=sig), imaging.vesselness(dsB, sigmas=sig)
     Lw = L.copy(); Lw[:, [0, 1, 3, 4]] *= W / imaging.WORK_XY   # landmarks are saved in 256 coords
     fit = R.fit_affine(Lw) if len(Lw) >= 3 else R.fit_rigid(Lw)
     M = np.asarray(fit["matrix"])
