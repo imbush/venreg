@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--diameter", type=float, default=None, help="expected cell diameter in px (default: auto)")
     ap.add_argument("--cpu", action="store_true", help="force CPU (default uses MPS/CUDA if available)")
     ap.add_argument("--out", default=None, help="output label TIFF (default: <stack>_ch<c>_masks.tif next to input)")
+    ap.add_argument("--save-extras", action="store_true", help="also save Cellpose cell-probability (_cellprob.tif) and a _seg.npy bundle (masks+flows)")
     args = ap.parse_args()
 
     info = imaging.tiff_info(args.tiff)
@@ -46,14 +47,27 @@ def main():
         model = models.CellposeModel(gpu=not args.cpu)
         kw = dict(diameter=args.diameter)
     if args.mode == "3d":
-        masks = model.eval(img, do_3D=True, z_axis=0, **kw)[0]
+        masks, flows, styles = model.eval(img, do_3D=True, z_axis=0, **kw)
     else:
-        masks = model.eval(img, do_3D=False, z_axis=0, stitch_threshold=0.5, **kw)[0]
+        masks, flows, styles = model.eval(img, do_3D=False, z_axis=0, stitch_threshold=0.5, **kw)
     masks = np.asarray(masks).astype(np.int32)
 
-    out = args.out or os.path.splitext(args.tiff)[0] + f"_ch{args.channel}_masks.tif"
+    stem = os.path.splitext(args.tiff)[0] + f"_ch{args.channel}"
+    out = args.out or stem + "_masks.tif"
     tifffile.imwrite(out, masks)
     print(f"{int(masks.max())} cells -> {out}")
+
+    if args.save_extras:
+        # flows = [flowsRGB, dP, cellprob, ...]; cellprob is the per-pixel cell probability
+        cellprob = flows[2] if isinstance(flows, (list, tuple)) and len(flows) > 2 else None
+        if cellprob is not None:
+            cp = stem + "_cellprob.tif"
+            tifffile.imwrite(cp, np.asarray(cellprob, np.float32))
+            print(f"  cell-probability -> {cp}")
+        seg = stem + "_seg.npy"
+        np.save(seg, {"masks": masks, "flows": flows, "diam": args.diameter,
+                      "channel": args.channel, "res": args.res, "mode": args.mode}, allow_pickle=True)
+        print(f"  seg bundle -> {seg}")
 
 
 if __name__ == "__main__":
