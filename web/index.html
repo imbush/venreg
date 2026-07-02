@@ -48,7 +48,7 @@
     <span class="hint">(precomputed Cellpose label TIFF or _seg.npy)</span>
     — match using
     <select id="cellmode"><option value="rigid">rigid</option><option value="warp">warp</option></select>
-    <select id="cellmethod"><option value="hungarian">hungarian (optimal)</option><option value="mnn">mutual-NN</option><option value="consistent">geometry-consistent</option></select>
+    <select id="cellmethod"><option value="soma_print">Soma-print (TRU-FACT)</option><option value="hungarian">hungarian (optimal)</option><option value="mnn">mutual-NN</option><option value="consistent">geometry-consistent</option></select>
     dist <input type="range" id="cellmaxd" min="2" max="24" step="1" value="8" oninput="cellmaxdv.textContent=this.value" style="width:80px"><span id="cellmaxdv" class="hint">8</span>
     <button onclick="matchCells()">match cells</button>
     <button class="tbtn" id="cellview" onclick="toggleCellView()">cell view: OFF</button>

@@ -107,12 +107,135 @@ def _consistent(cA, cBa, D, max_dist, k=8, tol=None):
     return keep
 
 
+# ---------------- Soma-print matcher (TRU-FACT, Wang et al.) ----------------
+# Register cells by the geometry of their neighbours (a "Soma-print": vectors from a cell
+# to its m nearest neighbours), not by appearance — robust across imaging modalities. A
+# multi-round, empirical-Bayes design (Wang et al.): round 1 scores candidates by greedy
+# vector matching over an m>n neighbour pool; later rounds rebuild each print from the
+# *confirmed*-matched neighbours; each accepted match carries a likelihood ratio.
+
+def _neighbor_vectors(pts, k):
+    """For each point, indices+vectors to its k nearest neighbours (self excluded)."""
+    from scipy.spatial import cKDTree
+    k = min(k, len(pts) - 1)
+    tree = cKDTree(pts)
+    idx = tree.query(pts, k=k + 1)[1][:, 1:]                 # drop self
+    vecs = pts[idx] - pts[:, None, :]
+    return idx, vecs
+
+
+def _greedy_mean(U, V, n):
+    """Mean of the n greedily best-matched vector-pair distances between prints U and V."""
+    from scipy.spatial.distance import cdist
+    D = cdist(U, V)
+    m = min(n, D.shape[0], D.shape[1])
+    if m == 0:
+        return np.inf
+    tot = 0.0
+    for _ in range(m):
+        f = int(D.argmin()); r, c = divmod(f, D.shape[1])
+        tot += D[r, c]; D[r, :] = np.inf; D[:, c] = np.inf
+    return tot / m
+
+
+def _two_gauss_em(x, iters=300):
+    """1-D 2-component Gaussian mixture (returns weights, means, stds; comp 0 = lower mean)."""
+    x = np.asarray(x, float)
+    mu = np.percentile(x, [20, 65]).astype(float)
+    sig = np.full(2, x.std() / 2 + 1e-6); w = np.array([0.5, 0.5])
+    for _ in range(iters):
+        p = np.stack([w[k] * np.exp(-0.5 * ((x - mu[k]) / sig[k]) ** 2) / (sig[k] * np.sqrt(2 * np.pi))
+                      for k in range(2)])
+        p /= p.sum(0) + 1e-300
+        for k in range(2):
+            nk = p[k].sum() + 1e-9
+            mu[k] = (p[k] * x).sum() / nk
+            sig[k] = np.sqrt((p[k] * (x - mu[k]) ** 2).sum() / nk) + 1e-6
+            w[k] = nk / len(x)
+    o = np.argsort(mu)
+    return w[o], mu[o], sig[o]
+
+
+def _gauss(x, mu, sig):
+    return np.exp(-0.5 * ((x - mu) / sig) ** 2) / (sig * np.sqrt(2 * np.pi))
+
+
+def soma_print_match(cA, cB, M, field=None, m_a=15, m_b=30, n=10, radius=None,
+                     beta=1.0, rounds=3, lr_thresh=0.05):
+    """Soma-print cell matching. cA,cB: centroids (x,y,z) in the working grid; cB is mapped
+    into A's frame first. Returns (pairs [(iA,jB)], info) with per-match likelihood ratio
+    and posterior probability of a correct match."""
+    from scipy.spatial import cKDTree
+    cA = np.asarray(cA, float); cB = np.asarray(cB, float)
+    if len(cA) < 5 or len(cB) < 5:
+        return [], {}
+    cBa = map_points(cB, M, field)
+    # local search radius (their "correct matches lie nearby" prior): a few median spacings
+    nnA = cKDTree(cA).query(cA, k=2)[0][:, 1]
+    if radius is None:
+        radius = float(np.median(nnA) * 6)
+    treeB = cKDTree(cBa)
+    _, vA = _neighbor_vectors(cA, m_a)
+    _, vB = _neighbor_vectors(cBa, m_b)
+    cand = [np.array(treeB.query_ball_point(cA[i], radius), dtype=int) for i in range(len(cA))]
+
+    matchB = np.full(len(cA), -1, int); lr_of = np.full(len(cA), np.nan)
+    for rnd in range(rounds):
+        best_j = np.full(len(cA), -1, int); best_c = np.full(len(cA), np.inf)
+        second_c = np.full(len(cA), np.inf)
+        if rnd == 0:
+            score = lambda i, j: _greedy_mean(vA[i], vB[j], n) + beta * np.linalg.norm(cA[i] - cBa[j])
+        else:                                            # rebuild prints from confirmed matches
+            conf = np.where(matchB >= 0)[0]
+            if len(conf) < 4:
+                break
+            treeC = cKDTree(cA[conf])
+            def score(i, j, _tc=treeC, _conf=conf):
+                kk = min(n, len(_conf) - 1)
+                nb = _conf[_tc.query(cA[i], k=kk + 1)[1][1:]]      # nearest confirmed A-neighbours
+                U = cA[nb] - cA[i]; W = cBa[matchB[nb]] - cBa[j]
+                return float(np.linalg.norm(U - W, axis=1).mean()) + beta * np.linalg.norm(cA[i] - cBa[j])
+        for i in range(len(cA)):
+            for j in cand[i]:
+                c = score(i, j)
+                if c < best_c[i]:
+                    second_c[i] = best_c[i]; best_c[i] = c; best_j[i] = j
+                elif c < second_c[i]:
+                    second_c[i] = c
+        have = np.isfinite(best_c) & np.isfinite(second_c)
+        if have.sum() < 10:
+            break
+        w, mu, sig = _two_gauss_em(best_c[have])             # comp0 correct (low), comp1 incorrect
+        p_cor = w[0] * _gauss(best_c, mu[0], sig[0])
+        p_inc = w[1] * _gauss(best_c, mu[1], sig[1])
+        lr = np.where(p_cor > 0, p_inc / (p_cor + 1e-300), np.inf)
+        # accept, resolving B-cell conflicts by lowest cost
+        order = np.argsort(best_c)
+        matchB = np.full(len(cA), -1, int); lr_of = np.full(len(cA), np.nan); usedB = set()
+        for i in order:
+            j = best_j[i]
+            if j < 0 or not np.isfinite(best_c[i]) or lr[i] >= lr_thresh or j in usedB:
+                continue
+            matchB[i] = j; lr_of[i] = lr[i]; usedB.add(int(j))
+        if rnd > 0 and (matchB >= 0).sum() <= prev_n:       # converged
+            pass
+        prev_n = (matchB >= 0).sum()
+
+    pairs = [(int(i), int(matchB[i])) for i in range(len(cA)) if matchB[i] >= 0]
+    info = {(int(i), int(matchB[i])): {"lr": float(lr_of[i]),
+            "prob_correct": float(1.0 / (1.0 + lr_of[i]))}
+            for i in range(len(cA)) if matchB[i] >= 0}
+    return pairs, info
+
+
 def match(cA, cB, M, field=None, method="hungarian", max_dist=8.0):
     """Return list of (iA, jB) matched index pairs. cA, cB are centroids (x,y,z) in the
     working grid; cB is mapped into A's frame via the registration before matching."""
     cA = np.asarray(cA, float); cB = np.asarray(cB, float)
     if cA.shape[0] == 0 or cB.shape[0] == 0:
         return []
+    if method == "soma_print":
+        return soma_print_match(cA, cB, M, field)[0]
     cBa = map_points(cB, M, field)
     from scipy.spatial.distance import cdist
     D = cdist(cA, cBa)
